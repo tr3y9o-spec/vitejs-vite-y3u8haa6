@@ -4,7 +4,7 @@ import { getStorage } from "firebase/storage";
 
 // ↓↓↓ あなたのキーに書き換えてください ↓↓↓
 const firebaseConfig = {
-  apiKey: "AIzaSyDwIwisBuYLMQ5cz7-TlJpSxB3s6NEoUbw",
+  apiKey: "AIzaSyBh3DrmLrNpt1oe0VybrPDndS5SfhWH4OM",
   authDomain: "sake-data.firebaseapp.com",
   projectId: "sake-data",
   storageBucket: "sake-data.firebasestorage.app",

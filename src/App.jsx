@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import TopPage from './TopPage';
 import SakeManager from './SakeManager';
 import WineManager from './WineManager';
-import OtherManager from './OtherManager'; // Import
+import OtherManager from './OtherManager';
+import ShelfManager from './components/ShelfManager'; // パスを確認
 
-// Placeholder for future features
 const PlaceholderPage = ({ title, onBack }) => (
   <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4">
     <h1 className="text-2xl font-bold mb-4">{title}</h1>
@@ -15,30 +15,22 @@ const PlaceholderPage = ({ title, onBack }) => (
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('top');
+  
+  // ★追加: 棚管理のモードを記憶するState (初期値はdrinks)
+  const [shelfMode, setShelfMode] = useState('drinks'); 
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'top':
-        return <TopPage onNavigate={setCurrentPage} />;
-      
-      // === 各マネージャー画面 (共通コンテナでラップ) ===
-      case 'sake':
-        return <PageContainer><SakeManager /></PageContainer>;
-      case 'wine':
-        return <PageContainer><WineManager /></PageContainer>;
-      case 'other':
-        return <PageContainer><OtherManager /></PageContainer>;
-        
-      default:
-        return <PlaceholderPage title={currentPage} onBack={() => setCurrentPage('top')} />;
+  // ★修正: ページとモードの両方を受け取る関数を作成
+  const handleNavigate = (page, mode = null) => {
+    setCurrentPage(page);
+    if (mode) {
+        setShelfMode(mode); // モード指定があれば記憶する
     }
   };
 
-  // 共通のレイアウトコンテナ（HOME戻るボタン付き）
   const PageContainer = ({ children }) => (
     <div className="relative animate-in fade-in duration-300">
       {children}
-      <button 
+      <button
         onClick={() => setCurrentPage('top')}
         className="fixed bottom-4 left-4 z-50 bg-black/80 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg backdrop-blur-sm hover:bg-black transition-all active:scale-95 flex items-center gap-1"
       >
@@ -46,6 +38,30 @@ export default function App() {
       </button>
     </div>
   );
+
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'top':
+        // ★修正: setCurrentPageを直接渡さず、handleNavigateを渡す
+        return <TopPage onNavigate={handleNavigate} />;
+
+      case 'sake':
+        return <PageContainer><SakeManager /></PageContainer>;
+
+      case 'wine':
+        return <PageContainer><WineManager /></PageContainer>;
+
+      case 'other':
+        return <PageContainer><OtherManager /></PageContainer>;
+      
+      case 'shelf':
+        // ★修正: 記憶したモード(shelfMode)をShelfManagerに渡す
+        return <PageContainer><ShelfManager mode={shelfMode} /></PageContainer>;
+
+      default:
+        return <PlaceholderPage title={currentPage} onBack={() => setCurrentPage('top')} />;
+    }
+  };
 
   return <>{renderPage()}</>;
 }

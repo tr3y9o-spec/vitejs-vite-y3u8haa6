@@ -1,14 +1,35 @@
+📄 index.html (ルートディレクトリ)
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sake Manager</title>
+    <title>Setsu-Phone</title>
     
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="apple-touch-icon" href="/icon-192x192.png" />
+    <!-- ▼ デフォルトのアイコン (基本) ▼ -->
+    <link id="app-icon" rel="apple-touch-icon" href="/icon-192x192.png" />
+    <link id="app-favicon" rel="icon" type="image/png" href="/icon-192x192.png" />
+    
+    <!-- ▼ アイコン着せ替えスクリプト ▼ -->
+    <script>
+      (function() {
+        const params = new URLSearchParams(window.location.search);
+        // パラメータ名を 'icon' に変更しました
+        const iconType = params.get('icon');
+        
+        // 2つ目のアイコン画像
+        const secondIcon = '/icon-2nd.png'; 
+
+        // URLに ?icon=2nd がついていたらアイコンを変更
+        if (iconType === '2nd') {
+          const iconLink = document.getElementById('app-icon');
+          const favLink = document.getElementById('app-favicon');
+          
+          if (iconLink) iconLink.href = secondIcon;
+          if (favLink) favLink.href = secondIcon;
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

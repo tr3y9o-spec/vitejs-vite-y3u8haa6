@@ -153,7 +153,7 @@ export default function TopPage({ onNavigate }) {
                         </a>
                         <a href="/?icon=2nd" className="flex flex-col items-center justify-center bg-white border border-blue-300 p-3 rounded-lg hover:bg-blue-50 relative text-decoration-none">
                             {/* 2ndアイコンとして同じ画像を薄く表示(仮) */}
-                            <img src="/icon-192x192.png" className="w-10 h-10 rounded-lg mb-2 shadow-sm object-cover opacity-70" alt="Design B" />
+                            <img src="/icon-2nd.png" className="w-10 h-10 rounded-lg mb-2 shadow-sm object-cover opacity-70" alt="Design B" />
                             <span className="text-xs font-bold text-blue-700">デザインB</span>
                         </a>
                     </div>

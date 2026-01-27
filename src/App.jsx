@@ -3,8 +3,10 @@ import TopPage from './TopPage';
 import SakeManager from './SakeManager';
 import WineManager from './WineManager';
 import OtherManager from './OtherManager';
-import ShelfManager from './components/ShelfManager'; // パスを確認
+// 棚管理コンポーネントの読み込み（まだファイルがない場合はエラーになりますが、後で作ります）
+import ShelfManager from './components/ShelfManager'; 
 
+// 開発中ページ用のプレースホルダー
 const PlaceholderPage = ({ title, onBack }) => (
   <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4">
     <h1 className="text-2xl font-bold mb-4">{title}</h1>
@@ -16,19 +18,20 @@ const PlaceholderPage = ({ title, onBack }) => (
 export default function App() {
   const [currentPage, setCurrentPage] = useState('top');
   
-  // ★追加: 棚管理のモードを記憶するState (初期値はdrinks)
-  const [shelfMode, setShelfMode] = useState('drinks'); 
+  // ★重要: 棚管理の「モード（ドリンク/食品/消耗品）」を記憶する変数
+  const [shelfMode, setShelfMode] = useState('drinks');
 
-  // ★修正: ページとモードの両方を受け取る関数を作成
+  // ページ切り替え関数（モード指定対応版）
   const handleNavigate = (page, mode = null) => {
     setCurrentPage(page);
     if (mode) {
-        setShelfMode(mode); // モード指定があれば記憶する
+      setShelfMode(mode); // 食品などのモード指定があればセット
     }
   };
 
+  // 共通のレイアウト（背景色や戻るボタン）
   const PageContainer = ({ children }) => (
-    <div className="relative animate-in fade-in duration-300">
+    <div className="relative min-h-screen bg-gray-50 animate-in fade-in duration-300">
       {children}
       <button
         onClick={() => setCurrentPage('top')}
@@ -39,10 +42,10 @@ export default function App() {
     </div>
   );
 
+  // ページ表示の分岐
   const renderPage = () => {
     switch (currentPage) {
       case 'top':
-        // ★修正: setCurrentPageを直接渡さず、handleNavigateを渡す
         return <TopPage onNavigate={handleNavigate} />;
 
       case 'sake':
@@ -56,6 +59,7 @@ export default function App() {
       
       case 'shelf':
         // ★修正: 記憶したモード(shelfMode)をShelfManagerに渡す
+        // ShelfManagerファイルがまだない場合は、一時的にPlaceholderPageを表示してもOK
         return <PageContainer><ShelfManager mode={shelfMode} /></PageContainer>;
 
       default:

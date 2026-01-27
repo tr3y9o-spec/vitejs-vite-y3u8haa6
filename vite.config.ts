@@ -4,6 +4,14 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // ★ ここを追加：開発サーバーのヘッダー設定
+  server: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    },
+  },
+  
   plugins: [
     react(),
     VitePWA({
@@ -13,7 +21,7 @@ export default defineConfig({
         name: 'Setsu-Phone',
         short_name: 'SetsuPhone',
         description: 'Restaurant Operation System',
-        theme_color: '#1f2937', // ヘッダーの色に合わせました
+        theme_color: '#1f2937',
         background_color: '#ffffff',
         display: 'standalone',
         icons: [

@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-// ▼▼▼ この1行が非常に重要です！これがないとデザインが当たりません ▼▼▼
+// ▼▼▼ 【最重要】この1行がないとデザインが崩壊します ▼▼▼
 import './index.css' 
 
 ReactDOM.createRoot(document.getElementById('root')).render(

@@ -1,196 +1,241 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Minus, ClipboardCopy, Check, Save, RefreshCw, Upload, Search, X, Sparkles } from 'lucide-react';
+import { Plus, Minus, ClipboardCopy, Check, Save, RefreshCw, Upload, Search, X, Sparkles, Send, BarChart3, TrendingUp, Truck, Split } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, addDoc, writeBatch, query, where, getDocs } from "firebase/firestore";
-
-// 日報生成ロジック（簡易版）
-const generateReport = (items, title) => {
-  const today = new Date().toLocaleDateString('ja-JP');
-  let text = `【${title} 棚卸日報】 ${today}\n------------------\n`;
-  items.forEach(item => {
-    if ((item.stock || 0) > 0) {
-      // ドリンクの場合は単位が「本」それ以外はitem.unitを使用
-      const unit = item.unit || '本';
-      const detail = item.stock_level ? `(残${item.stock_level}%)` : '';
-      text += `${item.name}: ${item.stock}${unit} ${detail}\n`;
-    }
-  });
-  text += `------------------\nTotal Items: ${items.length}`;
-  return text;
-};
+import { collection, onSnapshot, doc, updateDoc, writeBatch, addDoc } from "firebase/firestore";
+// 共通ロジック
+import { shareData, saveDailyReport } from '../utils/reportUtils';
 
 export default function ShelfManager({ mode = 'drinks' }) {
-  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // AI入力用
+  const [orderQuantities, setOrderQuantities] = useState({});
   const [showJsonInput, setShowJsonInput] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
+  const [expandedItemId, setExpandedItemId] = useState(null);
 
-  // モードごとの設定
+  // モード設定
   const config = {
     drinks: { 
       title: 'ドリンク全般', 
       color: 'bg-blue-600', 
       lightColor: 'bg-blue-50 text-blue-800',
-      collections: ['sakeList', 'wineList', 'otherList'] // 読み込むDB
+      collections: ['sakeList', 'wines', 'otherList'],
+      reportCollection: 'dailyReports_Drinks' 
     },
     food: { 
       title: '食品・調味料', 
       color: 'bg-orange-600', 
       lightColor: 'bg-orange-50 text-orange-800',
       collections: ['generalItems'],
-      filter: 'Food' // generalItems内のカテゴリフィルタ
+      filter: 'Food',
+      reportCollection: 'dailyReports_Food'
     },
     supplies: { 
       title: '消耗品・その他', 
       color: 'bg-gray-600', 
       lightColor: 'bg-gray-50 text-gray-800',
       collections: ['generalItems'],
-      filter: 'Supply'
+      filter: 'Supply',
+      reportCollection: 'dailyReports_Supplies'
     }
   }[mode];
 
-  // データ取得ロジック
+  // データ取得
+  const [rawData, setRawData] = useState({});
+
   useEffect(() => {
     if (!db) return;
     setLoading(true);
     const unsubscribers = [];
 
-    // ドリンクモード：3つのDBを結合して表示
+    const handleSnapshot = (snap, colName) => {
+        const data = snap.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            _collection: colName
+        }));
+        setRawData(prev => ({ ...prev, [colName]: data }));
+        setLoading(false);
+    };
+
     if (mode === 'drinks') {
-      const unsubSake = onSnapshot(collection(db, "sakeList"), (snap) => updateItems(snap, 'sakeList'));
-      const unsubWine = onSnapshot(collection(db, "wineList"), (snap) => updateItems(snap, 'wineList'));
-      const unsubOther = onSnapshot(collection(db, "otherList"), (snap) => updateItems(snap, 'otherList'));
-      unsubscribers.push(unsubSake, unsubWine, unsubOther);
-    } 
-    // 食品・消耗品モード：generalItemsからフィルタリング
-    else {
-      // 本来は複合クエリ推奨だが、簡易的に全件取得してJSでフィルタ
-      const unsubGeneral = onSnapshot(collection(db, "generalItems"), (snap) => updateItems(snap, 'generalItems'));
-      unsubscribers.push(unsubGeneral);
+      config.collections.forEach(col => {
+          unsubscribers.push(onSnapshot(collection(db, col), (snap) => handleSnapshot(snap, col)));
+      });
+    } else {
+      unsubscribers.push(onSnapshot(collection(db, "generalItems"), (snap) => handleSnapshot(snap, "generalItems")));
     }
 
     return () => unsubscribers.forEach(u => u());
   }, [mode]);
 
-  // データを統合するためのState管理
-  // collectionNameをキーにしてデータを保持
-  const [rawData, setRawData] = useState({});
-
-  const updateItems = (snapshot, collectionName) => {
-    const data = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      _collection: collectionName // 更新時に必要
-    }));
-    setRawData(prev => ({ ...prev, [collectionName]: data }));
-    setLoading(false);
-  };
-
-  // 表示用データの生成
+  // 表示データ生成
   const displayItems = useMemo(() => {
     let allItems = [];
     Object.values(rawData).forEach(arr => allItems = [...allItems, ...arr]);
 
-    // モードによるフィルタリング
     if (mode === 'food') allItems = allItems.filter(i => i.categoryType === 'Food');
     if (mode === 'supplies') allItems = allItems.filter(i => i.categoryType === 'Supply');
 
-    // 検索フィルタ
     if (searchTerm) {
       allItems = allItems.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()));
     }
 
-    // 統一フォーマットへの変換
     return allItems.map(item => ({
       ...item,
-      // フィールド名の揺らぎ吸収
       price: item.price_cost || item.cost || 0,
       stock: (item.stock !== undefined) ? item.stock : (item.stock_bottles !== undefined) ? item.stock_bottles : (item.stock_num !== undefined) ? item.stock_num : 0,
-      unit: item.unit || '本'
+      unit: item.unit || '個',
+      order_qty: orderQuantities[item.id] || 0
     }));
-  }, [rawData, mode, searchTerm]);
+  }, [rawData, mode, searchTerm, orderQuantities]);
 
-  // 在庫更新
   const updateStock = async (item, delta) => {
     const newStock = Math.max(0, (item.stock || 0) + delta);
-    
-    // コレクションごとにフィールド名が違う問題を吸収
     let fieldName = 'stock';
-    if (item._collection === 'wineList' || item._collection === 'sakeList') fieldName = 'stock_bottles';
+    if (item._collection === 'wines' || item._collection === 'sakeList') fieldName = 'stock_bottles';
     if (item._collection === 'otherList') fieldName = 'stock_num';
     
     await updateDoc(doc(db, item._collection, item.id), { [fieldName]: newStock });
   };
 
-  const updateLevel = async (item, level) => {
-    // 酒類のみ残量スライダー対応
-    if (['sakeList', 'wineList'].includes(item._collection)) {
-      await updateDoc(doc(db, item._collection, item.id), { stock_level: level });
-    }
+  const updateOrderQty = (itemId, delta) => {
+    setOrderQuantities(prev => ({
+        ...prev,
+        [itemId]: Math.max(0, (prev[itemId] || 0) + delta)
+    }));
   };
 
-  // AI一括登録 (General Items用)
-  const handleJsonImport = async () => {
+  const handleShare = async (type = 'stock') => {
+    const today = new Date().toLocaleDateString('ja-JP');
+    let text = "";
+    
+    if (type === 'order') {
+        const orderItems = displayItems.filter(i => i.order_qty > 0);
+        if (orderItems.length === 0) return alert("発注数が入力されていません");
+        text = `【${config.title} 発注リスト】 ${today}\n------------------\n`;
+        orderItems.forEach(item => { text += `${item.name}: ${item.order_qty}${item.unit}\n`; });
+    } else {
+        text = `【${config.title} 在庫報告】 ${today}\n------------------\n`;
+        displayItems.forEach(item => { if (item.stock > 0) text += `${item.name}: ${item.stock}${item.unit}\n`; });
+        text += `------------------\n資産合計: ¥${totalAsset.toLocaleString()}`;
+    }
+    await shareData(text, `${config.title} ${type === 'order' ? '発注' : '在庫'}`);
+  };
+
+  const handleSaveReport = async () => {
+    if (!confirm(`${config.title}の現在庫と発注内容を記録しますか？`)) return;
+    try {
+        await saveDailyReport(config.reportCollection, displayItems, totalAsset);
+        alert("保存しました。");
+    } catch (e) { alert("保存エラー: " + e.message); }
+  };
+
+  // ★★★ 自動振り分けインポート機能 ★★★
+  const handleSmartImport = async () => {
     try {
       const cleanJson = jsonInput.replace(/```json/g, '').replace(/```/g, '').trim();
       const data = JSON.parse(cleanJson);
       
       if (!Array.isArray(data)) throw new Error("配列形式で入力してください");
-      if (!confirm(`${data.length}件のデータを登録しますか？`)) return;
+      
+      // 確認ダイアログ
+      const sakeCount = data.filter(i => i.target === 'sake').length;
+      const wineCount = data.filter(i => i.target === 'wine').length;
+      const otherCount = data.filter(i => i.target === 'other').length;
+      const generalCount = data.filter(i => i.target === 'general').length;
+      
+      if (!confirm(`以下の内容で振り分け登録しますか？\n\n🍶 日本酒・焼酎: ${sakeCount}件\n🍷 ワイン: ${wineCount}件\n🍺 その他ドリンク: ${otherCount}件\n📦 食品・消耗品: ${generalCount}件`)) return;
 
       const batch = writeBatch(db);
-      // 食品・消耗品は generalItems に入れる
-      // ドリンクモードの場合は、適切なDBに振り分ける必要があるが、今回は食品・消耗品メインの実装とする
-      
-      let targetCollection = "generalItems";
-      let categoryType = mode === 'supplies' ? 'Supply' : 'Food';
-
-      // ドリンクモードでここから登録しようとした場合のガード
-      if (mode === 'drinks') {
-         alert("ドリンクの一括登録は、各マネージャー画面から行ってください。");
-         return;
-      }
-
       let count = 0;
+
       for (const item of data) {
-        const newRef = doc(collection(db, targetCollection));
-        batch.set(newRef, {
-          name: item.name,
-          categoryType: categoryType, // Food or Supply
-          category: item.category || 'その他',
-          price_cost: Number(item.price) || 0,
-          stock: Number(item.qty) || 0,
-          unit: item.unit || '個',
-          vendor: item.vendor || ''
-        });
-        count++;
+        let collectionName = '';
+        let docData = {};
+
+        // ターゲットごとのデータ整形
+        switch (item.target) {
+            case 'sake':
+                collectionName = 'sakeList';
+                docData = {
+                    name: item.name,
+                    kana: item.kana || '',
+                    type: item.type || 'Sake', // Sake, Shochu, Liqueur
+                    category_rank: item.rank || 'Take',
+                    price_cost: Number(item.price) || 0,
+                    capacity_ml: Number(item.capacity) || 1800,
+                    stock_bottles: Number(item.qty) || 0,
+                    stock_level: 100,
+                    order_history: []
+                };
+                break;
+            case 'wine':
+                collectionName = 'wines';
+                docData = {
+                    name: item.name,
+                    type: item.color || 'Red', // Red, White, Sparkling...
+                    vintage: item.vintage || '',
+                    country: item.country || '',
+                    price: Number(item.price_sell) || 0,
+                    cost: Number(item.price) || 0,
+                    stock_bottles: Number(item.qty) || 0,
+                    stock_level: 100,
+                    order_history: []
+                };
+                break;
+            case 'other':
+                collectionName = 'otherList';
+                docData = {
+                    name: item.name,
+                    category: item.category || 'Other',
+                    price_cost: Number(item.price) || 0,
+                    stock_num: Number(item.qty) || 0,
+                    order_history: []
+                };
+                break;
+            default: // general (food/supply)
+                collectionName = 'generalItems';
+                docData = {
+                    name: item.name,
+                    categoryType: mode === 'supplies' ? 'Supply' : 'Food', // 現在のモードに依存させるか、JSONの指定に従うか
+                    category: item.category || 'その他',
+                    price_cost: Number(item.price) || 0,
+                    stock: Number(item.qty) || 0,
+                    unit: item.unit || '個'
+                };
+                // JSONでgeneral指定かつcategoryType指定がない場合は現在のタブのモードを適用
+                if(item.target === 'general' && !item.categoryType) {
+                    // modeがdrinksの場合はデフォルトFoodにする等の処理
+                    docData.categoryType = (mode === 'supplies') ? 'Supply' : 'Food';
+                }
+                break;
+        }
+
+        if (collectionName) {
+            const newRef = doc(collection(db, collectionName));
+            batch.set(newRef, docData);
+            count++;
+        }
       }
+
       await batch.commit();
-      alert(`${count}件登録しました`);
-      setShowJsonInput(false); setJsonInput('');
+      alert(`${count}件のデータを各マネージャーに振り分けて登録しました！`);
+      setShowJsonInput(false); 
+      setJsonInput('');
 
-    } catch (e) { alert("エラー: " + e.message); }
+    } catch (e) {
+      alert("エラー: " + e.message + "\nJSONの形式またはtarget指定を確認してください。");
+    }
   };
 
-  // 日報コピー
-  const handleCopy = () => {
-    const text = generateReport(displayItems, config.title);
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true); setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  // 資産合計
   const totalAsset = displayItems.reduce((sum, i) => sum + (i.price * i.stock), 0);
+  const totalOrderCount = Object.values(orderQuantities).reduce((a, b) => a + b, 0);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20 font-sans">
       
-      {/* Header Area */}
+      {/* Header */}
       <div className={`sticky top-0 z-20 ${config.color} text-white p-4 shadow-md rounded-b-xl`}>
         <div className="flex justify-between items-end mb-2">
           <div>
@@ -203,7 +248,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
           </div>
         </div>
         
-        {/* Search & Actions */}
         <div className="flex gap-2 mt-4">
           <div className="relative flex-grow">
             <Search className="absolute left-2 top-2.5 text-white/50" size={16}/>
@@ -215,75 +259,105 @@ export default function ShelfManager({ mode = 'drinks' }) {
               onChange={e => setSearchTerm(e.target.value)}
             />
           </div>
-          <button onClick={handleCopy} className="bg-white text-gray-800 px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95 transition-transform">
-            {copied ? <Check size={14}/> : <ClipboardCopy size={14}/>} 日報
+          <button onClick={() => handleShare('stock')} className="bg-white/20 text-white px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95">
+            <Send size={14}/> 在庫
+          </button>
+          <button onClick={handleSaveReport} className="bg-white text-gray-800 px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95">
+             <Save size={14}/> 記録
           </button>
         </div>
+
+        {totalOrderCount > 0 && (
+            <div className="mt-3 bg-white/90 text-gray-900 p-2 rounded-lg flex justify-between items-center animate-in slide-in-from-top-2">
+                <span className="text-xs font-bold">発注候補: {totalOrderCount}点</span>
+                <button onClick={() => handleShare('order')} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold shadow flex items-center gap-1 active:scale-95">
+                    <Send size={12}/> 発注リスト送信
+                </button>
+            </div>
+        )}
       </div>
 
-      {/* Main List */}
+      {/* List */}
       <div className="p-3 space-y-3 mt-2">
         {loading && <div className="text-center text-gray-400 py-10">読み込み中...</div>}
-        
         {displayItems.map(item => (
-          <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex justify-between items-start mb-2">
+          <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
+            <button 
+                onClick={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)}
+                className="absolute top-3 right-3 text-gray-300 hover:text-blue-500"
+            >
+                <BarChart3 size={18}/>
+            </button>
+
+            <div className="flex justify-between items-start mb-2 pr-8">
               <div>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${config.lightColor} mb-1 inline-block`}>{item.category || item.category_rank || item.type || 'Item'}</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${config.lightColor} mb-1 inline-block`}>{item.category || 'Item'}</span>
                 <h3 className="font-bold text-gray-800 text-sm">{item.name}</h3>
                 <p className="text-xs text-gray-400">¥{item.price.toLocaleString()} / {item.unit}</p>
               </div>
-              
-              <div className="flex items-center gap-3 bg-gray-50 p-1 rounded-lg">
-                <button onClick={() => updateStock(item, -1)} className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-gray-600 active:scale-95 border border-gray-200"><Minus size={16}/></button>
-                <span className="font-bold w-6 text-center text-lg">{item.stock}</span>
-                <button onClick={() => updateStock(item, 1)} className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-gray-600 active:scale-95 border border-gray-200"><Plus size={16}/></button>
-              </div>
             </div>
 
-            {/* スライダー (酒類のみ) */}
-            {['sakeList', 'wineList'].includes(item._collection) && (
-              <div className="mt-2 pt-2 border-t border-gray-100">
-                <div className="flex justify-between text-[10px] text-gray-400 font-bold mb-1">
-                  <span>開封残量</span>
-                  <span>{item.stock_level ?? 100}%</span>
+            <div className="grid grid-cols-2 gap-3 mt-2">
+                <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 flex flex-col items-center">
+                    <span className="text-[9px] text-gray-400 font-bold mb-1">現在庫</span>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => updateStock(item, -1)} className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-gray-600 active:scale-95 border border-gray-200"><Minus size={16}/></button>
+                        <span className="font-bold w-6 text-center text-lg">{item.stock}</span>
+                        <button onClick={() => updateStock(item, 1)} className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-gray-600 active:scale-95 border border-gray-200"><Plus size={16}/></button>
+                    </div>
                 </div>
-                <input
-                  type="range"
-                  min="0" max="100" step="10"
-                  className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                  value={item.stock_level ?? 100}
-                  onChange={(e) => updateLevel(item, Number(e.target.value))}
-                />
-              </div>
+                <div className="bg-green-50 p-2 rounded-lg border border-green-100 flex flex-col items-center relative">
+                    <span className="text-[9px] text-green-700 font-bold mb-1">発注数</span>
+                    {item.order_qty > 0 && <span className="absolute top-[-5px] right-[-5px] w-4 h-4 bg-red-500 rounded-full animate-ping opacity-75"></span>}
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => updateOrderQty(item.id, -1)} className={`w-8 h-8 flex items-center justify-center rounded shadow-sm active:scale-95 border ${item.order_qty > 0 ? 'bg-white text-green-700 border-green-200' : 'bg-gray-100 text-gray-300 border-transparent'}`}><Minus size={16}/></button>
+                        <span className={`font-bold w-6 text-center text-lg ${item.order_qty > 0 ? 'text-green-700' : 'text-gray-300'}`}>{item.order_qty}</span>
+                        <button onClick={() => updateOrderQty(item.id, 1)} className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-green-700 active:scale-95 border border-green-200"><Plus size={16}/></button>
+                    </div>
+                </div>
+            </div>
+
+            {expandedItemId === item.id && (
+                <div className="mt-3 pt-3 border-t border-gray-100 animate-in fade-in">
+                    <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><TrendingUp size={14}/> 在庫履歴 (直近7回分)</p>
+                    {item.daily_stats && item.daily_stats.length > 0 ? (
+                        <div className="flex items-end gap-1 h-24 border-b border-gray-200 pb-1">
+                            {item.daily_stats.slice(-7).map((stat, idx) => (
+                                <div key={idx} className="flex-1 flex flex-col items-center group relative">
+                                    {stat.order_qty > 0 && (<div className="w-full bg-green-400 opacity-50 absolute bottom-0" style={{ height: `${Math.min(100, stat.order_qty * 10)}%` }}></div>)}
+                                    <div className="w-3/4 bg-blue-500 rounded-t-sm z-10" style={{ height: `${Math.min(100, (stat.stock / 20) * 100)}%` }}></div>
+                                    <span className="text-[8px] text-gray-400 mt-1 transform -rotate-45 origin-left translate-y-2">{stat.date.slice(5)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-center text-xs text-gray-400 py-4">履歴データがまだありません</div>
+                    )}
+                </div>
             )}
           </div>
         ))}
       </div>
+      
+      {/* Smart Import Button (Always visible) */}
+      <button onClick={() => setShowJsonInput(!showJsonInput)} className={`fixed bottom-20 right-4 ${config.color} text-white p-4 rounded-full shadow-xl hover:opacity-90 active:scale-95 transition-transform z-30`}>
+           <Plus size={24}/>
+      </button>
 
-      {/* AI Add Button (Food/Supplies only) */}
-      {mode !== 'drinks' && (
-        <>
-          <button onClick={() => setShowJsonInput(!showJsonInput)} className={`fixed bottom-20 right-4 ${config.color} text-white p-4 rounded-full shadow-xl hover:opacity-90 active:scale-95 transition-transform z-30`}>
-            {showJsonInput ? <X size={24}/> : <Plus size={24}/>}
-          </button>
-
-          {showJsonInput && (
-            <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4" onClick={() => setShowJsonInput(false)}>
-              <div className="bg-white w-full max-w-sm rounded-xl p-4 shadow-2xl animate-in slide-in-from-bottom-5" onClick={e => e.stopPropagation()}>
-                <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2"><Sparkles size={16} className="text-yellow-500"/> AI一括登録</h3>
-                <p className="text-xs text-gray-500 mb-2">NotebookLM等のJSONを貼り付けてください</p>
+      {showJsonInput && (
+        <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4" onClick={() => setShowJsonInput(false)}>
+            <div className="bg-white w-full max-w-sm rounded-xl p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+                <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2"><Split size={18} className="text-purple-600"/> 自動振り分け登録</h3>
+                <p className="text-xs text-gray-500 mb-3">AIに <code>target: "sake" / "wine" / "other" / "general"</code> を指定させたJSONを貼り付けてください。</p>
                 <textarea 
                   className="w-full h-32 border border-gray-200 rounded-lg p-2 text-xs mb-3 focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder='[{"name":"醤油", "category":"調味料", "price":300, "qty":5, "unit":"本"}]'
                   value={jsonInput}
                   onChange={e => setJsonInput(e.target.value)}
+                  placeholder='[{"target":"sake", "name":"黒霧島", ...}]'
                 />
-                <button onClick={handleJsonImport} className={`w-full ${config.color} text-white py-3 rounded-lg font-bold text-sm shadow-md`}>登録実行</button>
-              </div>
+                <button onClick={handleSmartImport} className={`w-full ${config.color} text-white py-3 rounded-lg font-bold shadow-md`}>振り分け登録を実行</button>
             </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   );

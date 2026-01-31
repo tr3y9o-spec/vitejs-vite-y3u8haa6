@@ -33,7 +33,7 @@ import {
   limit,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-// ロジックをインポート
+
 import { analyzeHistory } from './utils/sakeLogic';
 
 const OTHER_CATEGORIES = [
@@ -87,7 +87,7 @@ export default function OtherManager() {
   const [showJsonInput, setShowJsonInput] = useState(false);
   const fileInputRef = useRef(null);
 
-  // ★統計データ計算（グラフ用）
+
   const stats = modalItem ? analyzeHistory(modalItem.order_history) : null;
 
   useEffect(() => {
@@ -137,6 +137,7 @@ export default function OtherManager() {
       category: 'Beer',
       price_cost: 0,
       stock_num: 0,
+      stock_level: 100,
       note: '',
     });
     setIsEditMode(true);
@@ -148,11 +149,17 @@ export default function OtherManager() {
   const handleSave = async () => {
     if (!editForm.name) return alert('名称は必須です');
     try {
+      const saveData = {
+          ...editForm,
+          price_cost: Number(editForm.price_cost) || 0,
+          stock_num: Number(editForm.stock_num) || 0,
+          stock_level: Number(editForm.stock_level) || 100
+      };
       if (modalItem.id) {
-        await updateDoc(doc(db, 'otherList', modalItem.id), editForm);
+        await updateDoc(doc(db, 'otherList', modalItem.id), saveData);
         alert('更新しました');
       } else {
-        await addDoc(collection(db, 'otherList'), editForm);
+        await addDoc(collection(db, 'otherList'), saveData);
         alert('新規登録しました');
       }
       setModalItem(null);
@@ -200,6 +207,10 @@ export default function OtherManager() {
     await updateDoc(doc(db, 'otherList', id), { stock_num: newStock });
   };
 
+  const updateLevel = async (id, level) => {
+    await updateDoc(doc(db, 'otherList', id), { stock_level: level });
+  };
+
   const handleJsonImport = async () => {
     try {
       const cleanJson = jsonInput
@@ -208,12 +219,7 @@ export default function OtherManager() {
         .trim();
       const data = JSON.parse(cleanJson);
       if (Array.isArray(data)) {
-        if (
-          !confirm(
-            `${data.length}件のデータを一括登録しますか？\n（既存の商品名がある場合はスキップされます）`
-          )
-        )
-          return;
+        if (!confirm(`${data.length}件のデータを一括登録しますか？`)) return;
         let count = 0;
         for (const item of data) {
           const exists = itemList.some((i) => i.name === item.name);
@@ -223,6 +229,7 @@ export default function OtherManager() {
               category: item.category || 'Other',
               price_cost: Number(item.price_cost) || 0,
               stock_num: 0,
+              stock_level: 100,
               note: item.note || '',
               order_history: item.order_history || [],
             });
@@ -242,6 +249,13 @@ export default function OtherManager() {
     }
   };
 
+  // 資産合計計算ロジック（開封済みも考慮）
+  const totalAsset = filteredData.reduce((sum, item) => {
+    const bottleValue = (item.stock_num || 0) * (item.price_cost || 0);
+    const openBottleValue = Math.round((item.price_cost || 0) * ((item.stock_level ?? 100) / 100));
+    return sum + bottleValue + openBottleValue;
+  }, 0);
+
   const handleSaveToCloud = async () => {
     if (!confirm('現在の在庫状況を「本日の記録」として保存しますか？')) return;
     try {
@@ -249,17 +263,15 @@ export default function OtherManager() {
       const reportData = {
         date: today.toLocaleDateString('ja-JP'),
         createdAt: today.toISOString(),
-        total_assets: filteredData.reduce(
-          (sum, i) => sum + (i.stock_num || 0) * i.price_cost,
-          0
-        ),
+        total_assets: totalAsset,
         items: filteredData
           .map((item) => ({
             name: item.name,
             category: item.category,
             stock: item.stock_num || 0,
+            level: item.stock_level ?? 100
           }))
-          .filter((i) => i.stock > 0),
+          .filter((i) => i.stock > 0 || i.level < 100),
       };
       await addDoc(collection(db, 'otherReports'), reportData);
       alert('クラウドに保存しました！');
@@ -273,9 +285,14 @@ export default function OtherManager() {
     const today = new Date().toLocaleDateString('ja-JP');
     let text = `【その他ドリンク在庫】 ${today}\n------------------\n`;
     itemList.forEach((item) => {
-      if ((item.stock_num || 0) > 0)
-        text += `${item.name}: ${item.stock_num}\n`;
+      if ((item.stock_num || 0) > 0 || (item.stock_level ?? 100) < 100) {
+        text += `${item.name}: ${item.stock_num}`;
+        if((item.stock_level ?? 100) < 100) text += ` (開封: ${item.stock_level}%)`;
+        text += `\n`;
+      }
     });
+    text += `------------------\nTotal Asset: ¥${totalAsset.toLocaleString()}`;
+    
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -304,7 +321,7 @@ export default function OtherManager() {
               : 'text-gray-400'
           }`}
         >
-          在庫管理
+          資産・在庫
         </button>
       </div>
 
@@ -385,12 +402,7 @@ export default function OtherManager() {
               </p>
               <p className="text-2xl font-bold">
                 ¥{' '}
-                {filteredData
-                  .reduce(
-                    (sum, i) => sum + (i.stock_num || 0) * i.price_cost,
-                    0
-                  )
-                  .toLocaleString()}
+                {totalAsset.toLocaleString()}
               </p>
               <div className="grid grid-cols-2 gap-3 mt-4">
                 <button
@@ -463,29 +475,46 @@ export default function OtherManager() {
             {filteredData.map((item) => (
               <div
                 key={item.id}
-                className="bg-white p-3 rounded-lg border flex justify-between items-center shadow-sm"
+                className="bg-white p-3 rounded-lg border shadow-sm"
               >
-                <div>
-                  <h3 className="font-bold text-sm text-gray-800">
-                    {item.name}
-                  </h3>
+                <div className="flex justify-between items-center mb-2">
+                    <div>
+                        <h3 className="font-bold text-sm text-gray-800">
+                            {item.name}
+                        </h3>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => updateStock(item.id, -1)}
+                            className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100"
+                        >
+                            <Minus size={16} />
+                        </button>
+                        <span className="font-bold w-6 text-center">
+                            {item.stock_num || 0}
+                        </span>
+                        <button
+                            onClick={() => updateStock(item.id, 1)}
+                            className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100"
+                        >
+                            <Plus size={16} />
+                        </button>
+                    </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => updateStock(item.id, -1)}
-                    className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100"
-                  >
-                    <Minus size={16} />
-                  </button>
-                  <span className="font-bold w-6 text-center">
-                    {item.stock_num || 0}
-                  </span>
-                  <button
-                    onClick={() => updateStock(item.id, 1)}
-                    className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-gray-100"
-                  >
-                    <Plus size={16} />
-                  </button>
+
+                {/* スライダー追加 */}
+                <div className="border-t border-gray-100 pt-2">
+                    <div className="flex justify-between text-[10px] text-gray-400 font-bold mb-1">
+                        <span>残量</span>
+                        <span>{item.stock_level ?? 100}%</span>
+                    </div>
+                    <input 
+                        type="range" 
+                        min="0" max="100" step="10" 
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        value={item.stock_level ?? 100}
+                        onChange={(e) => updateLevel(item.id, Number(e.target.value))}
+                    />
                 </div>
               </div>
             ))}
@@ -561,7 +590,7 @@ export default function OtherManager() {
                     {modalItem.note || 'メモなし'}
                   </div>
 
-                  {/* ★グラフ表示エリア追加 */}
+
                   <div className="border-t pt-4">
                     <div className="flex items-center gap-2 mb-4">
                       <BarChart3 className="text-gray-400" size={20} />

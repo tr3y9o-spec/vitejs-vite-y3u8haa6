@@ -14,7 +14,8 @@ import {
   ChevronDown,
   ChevronRight,
   History,
-  Info, // ★ アイコン追加
+  Info,
+  TrendingUp // ★追加
 } from 'lucide-react';
 import { db } from '../firebase';
 import { collection, addDoc, getDocs } from 'firebase/firestore';
@@ -48,10 +49,10 @@ const SakeModal = ({
   const fileInputRef = useRef(null);
   const specInputRef = useRef(null);
   const [showHistoryLog, setShowHistoryLog] = useState(false);
-  // ★ タイプ説明の開閉用state
   const [showTypeDetail, setShowTypeDetail] = useState(false);
 
   // データ準備
+  // 旧来の履歴分析（納品サイクルなど）はそのまま活用
   const stats = item ? analyzeHistory(item.order_history) : null;
   const triviaList = item ? getTriviaList(item) : [];
   const pairingProfile = item ? getPairingProfile(item) : null;
@@ -99,6 +100,7 @@ const SakeModal = ({
             sales_talk: '',
             pairing_hint: '',
             order_history: newItem.order_history || [],
+            daily_stats: [], // 新規作成時は空配列
           });
           count++;
         }
@@ -235,7 +237,6 @@ const SakeModal = ({
                       </button>
                     </div>
 
-                    {/* ★ タップ時に表示される説明文エリア */}
                     {showTypeDetail && (
                       <div className="bg-white/80 p-3 rounded-lg border border-purple-100 mb-3 text-xs text-purple-800 leading-relaxed animate-in fade-in slide-in-from-top-1 shadow-inner">
                         <span className="font-bold block mb-1">
@@ -288,7 +289,6 @@ const SakeModal = ({
                 <div className="mb-6 space-y-3">
                   <div className="flex items-center gap-2 text-gray-800 font-bold text-xs uppercase tracking-wider">
                     <BookOpen size={14} className="text-gray-500" /> 豆知識
-                    (Trivia)
                   </div>
                   {triviaList.map((trivia, index) => (
                     <div
@@ -314,9 +314,13 @@ const SakeModal = ({
                   <div className="flex items-center gap-2 mb-4">
                     <BarChart3 className="text-gray-400" size={20} />
                     <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider">
-                      Analysis
+                      Analysis (在庫推移)
                     </h3>
                   </div>
+
+                  {/* ★★★ ここからAnalysis刷新 ★★★ */}
+                  
+                  {/* 1. 基本統計 (既存の統計データを活用) */}
                   <div className="grid grid-cols-3 gap-2 mb-4">
                     <div className="bg-gray-50 p-2 rounded-lg text-center">
                       <span className="block text-[10px] text-gray-500">
@@ -328,7 +332,7 @@ const SakeModal = ({
                     </div>
                     <div className="bg-gray-50 p-2 rounded-lg text-center">
                       <span className="block text-[10px] text-gray-500">
-                        累計
+                        累計納品
                       </span>
                       <span className="block font-bold text-sm">
                         {stats.total}回
@@ -343,37 +347,48 @@ const SakeModal = ({
                       </span>
                     </div>
                   </div>
+
+                  {/* 2. 日次推移グラフ (新機能：StockView/ShelfManagerと統一) */}
                   <div className="bg-white border border-gray-100 p-4 rounded-lg shadow-inner mb-4">
-                    <div className="flex items-end justify-between h-24 gap-1">
-                      {stats.monthly.map((m, i) => {
-                        const max =
-                          Math.max(...stats.monthly.map((d) => d.count)) || 1;
-                        return (
-                          <div
-                            key={i}
-                            className="flex-1 flex flex-col items-center group"
-                          >
-                            <div
-                              className={`w-full max-w-[20px] rounded-t-sm transition-all duration-500 ${
-                                m.count > 0
-                                  ? 'bg-blue-400 group-hover:bg-blue-500'
-                                  : 'bg-gray-100'
-                              }`}
-                              style={{
-                                height: `${(m.count / max) * 100}%`,
-                                minHeight: m.count > 0 ? '4px' : '2px',
-                              }}
-                            ></div>
-                            <span className="text-[9px] text-gray-400 mt-1">
-                              {m.label.replace('月', '')}
-                            </span>
-                          </div>
-                        );
-                      })}
+                    <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1">
+                        <TrendingUp size={14}/> 直近の在庫変動
+                    </p>
+                    {item.daily_stats && item.daily_stats.length > 0 ? (
+                         <div className="flex items-end gap-1 h-24 border-b border-gray-200 pb-1">
+                            {item.daily_stats.slice(-10).map((stat, idx) => (
+                                <div key={idx} className="flex-1 flex flex-col items-center group relative">
+                                    {/* 納品バー (緑) */}
+                                    {stat.order_qty > 0 && (
+                                        <div 
+                                            className="w-full bg-green-400 opacity-50 absolute bottom-0"
+                                            style={{ height: `${Math.min(100, stat.order_qty * 10)}%` }}
+                                        ></div>
+                                    )}
+                                    {/* 在庫バー (青) */}
+                                    <div 
+                                        className="w-2/3 bg-blue-500 rounded-t-sm z-10"
+                                        style={{ height: `${Math.min(100, (stat.stock / 20) * 100)}%` }}
+                                    ></div>
+                                    <span className="text-[8px] text-gray-400 mt-1 transform -rotate-45 origin-left translate-y-2">{stat.date.slice(5)}</span>
+                                    {/* Tooltip */}
+                                    <div className="absolute bottom-full mb-1 hidden group-hover:block bg-black/80 text-white text-[9px] p-1 rounded whitespace-nowrap z-20">
+                                        {stat.date}<br/>在庫: {stat.stock}<br/>発注: {stat.order_qty}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="h-24 flex items-center justify-center text-xs text-gray-400 bg-gray-50 rounded">
+                            <p>日報データ蓄積中...</p>
+                        </div>
+                    )}
+                    <div className="flex justify-end gap-3 mt-4 text-[9px] text-gray-400">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-blue-500 rounded-sm"></span>在庫数</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-green-400 rounded-sm"></span>発注数</span>
                     </div>
                   </div>
 
-                  {/* 納品履歴ログ */}
+                  {/* 3. 納品履歴ログ (既存機能：長期履歴用として残す) */}
                   <div className="mb-4">
                     <button
                       onClick={() => setShowHistoryLog(!showHistoryLog)}
@@ -384,10 +399,10 @@ const SakeModal = ({
                       ) : (
                         <ChevronRight size={14} />
                       )}
-                      <History size={14} /> 履歴ログを表示
+                      <History size={14} /> 過去の全納品ログ
                     </button>
                     {showHistoryLog && (
-                      <div className="bg-gray-50 rounded-lg p-3 max-h-40 overflow-y-auto mt-1 text-xs">
+                      <div className="bg-gray-50 rounded-lg p-3 max-h-40 overflow-y-auto mt-1 text-xs animate-in slide-in-from-top-1">
                         {item.order_history && item.order_history.length > 0 ? (
                           <ul className="space-y-1">
                             {[...item.order_history]
@@ -453,7 +468,7 @@ const SakeModal = ({
               )}
             </>
           ) : (
-            // ================= 編集モード =================
+            // ================= 編集モード (変更なし) =================
             <div className="space-y-4">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-xs font-bold text-gray-500">

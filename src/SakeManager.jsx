@@ -1,24 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { User, LogOut } from 'lucide-react';
 import { db, storage } from './firebase';
-import {
-  doc,
-  onSnapshot,
-  collection,
-  updateDoc,
-  addDoc,
-  deleteDoc,
-  setDoc,
-} from 'firebase/firestore';
+import { doc, onSnapshot, collection, updateDoc, addDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-// Components
 import TabNav from './components/TabNav';
 import MenuView from './components/MenuView';
 import StockView from './components/StockView';
 import CalculatorView from './components/CalculatorView';
 import SakeModal from './components/SakeModal';
-// ★ 修正: MapView をインポート
 import MapView from './components/MapView';
 
 export default function SakeManager() {
@@ -26,23 +16,25 @@ export default function SakeManager() {
   const [modalItem, setModalItem] = useState(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
+  // ★ ここが空の場合、画像は表示されません
   const [cloudImages, setCloudImages] = useState({});
   const [isUploading, setIsUploading] = useState(false);
   const [sakeList, setSakeList] = useState([]);
   const [isSommelierMode, setIsSommelierMode] = useState(false);
-
-  // AI Import State
   const [jsonInput, setJsonInput] = useState('');
   const [showJsonInput, setShowJsonInput] = useState(false);
 
-  // Firestore Sync
   useEffect(() => {
     if (!db) return;
     const unsubList = onSnapshot(collection(db, 'sakeList'), (snapshot) => {
       setSakeList(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     });
+    // ★ ここで画像リストを取得しています
     const unsubImages = onSnapshot(doc(db, 'sakeImages', 'main'), (doc) => {
-      if (doc.exists()) setCloudImages(doc.data());
+      if (doc.exists()) {
+          console.log("Images loaded:", Object.keys(doc.data()).length); // デバッグ用ログ
+          setCloudImages(doc.data());
+      }
     });
     return () => {
       unsubList();
@@ -50,30 +42,16 @@ export default function SakeManager() {
     };
   }, []);
 
-  // Handlers
   const handleAddNew = () => {
     let defaultType = 'Sake';
     if (activeTab === 'shochu') defaultType = 'Shochu';
     if (activeTab === 'liqueur') defaultType = 'Liqueur';
 
     const newItem = {
-      id: '',
-      name: '',
-      kana: '',
-      category_rank: 'Take',
-      type: defaultType,
-      price_cost: 0,
-      capacity_ml: 1800,
-      tags: [],
-      sales_talk: '',
-      pairing_hint: '',
-      source_text: '',
-      spec_image: '',
-      stock_level: 100,
-      stock_bottles: 0,
-      order_history: [],
-      axisX: 50,
-      axisY: 50,
+      id: '', name: '', kana: '', category_rank: 'Take', type: defaultType,
+      price_cost: 0, capacity_ml: 1800, tags: [], sales_talk: '', pairing_hint: '',
+      source_text: '', spec_image: '', stock_level: 100, stock_bottles: 0,
+      order_history: [], axisX: 50, axisY: 50,
     };
     setEditForm(newItem);
     setIsEditMode(true);
@@ -92,14 +70,10 @@ export default function SakeManager() {
 
   const handleJsonImport = () => {
     try {
-      const cleanJson = jsonInput
-        .replace(/```json/g, '')
-        .replace(/```/g, '')
-        .trim();
+      const cleanJson = jsonInput.replace(/```json/g, '').replace(/```/g, '').trim();
       const data = JSON.parse(cleanJson);
       setEditForm((prev) => ({
-        ...prev,
-        ...data,
+        ...prev, ...data,
         price_cost: Number(data.price_cost) || prev.price_cost,
         capacity_ml: Number(data.capacity_ml) || prev.capacity_ml,
         axisX: Number(data.axisX) || prev.axisX,
@@ -107,9 +81,7 @@ export default function SakeManager() {
       }));
       alert('AIデータを反映しました。');
       setShowJsonInput(false);
-    } catch (e) {
-      alert('データ形式エラー');
-    }
+    } catch (e) { alert('データ形式エラー'); }
   };
 
   const handleSave = async () => {
@@ -122,11 +94,8 @@ export default function SakeManager() {
         await addDoc(collection(db, 'sakeList'), editForm);
         alert('新規登録しました！');
       }
-      setModalItem(null);
-      setIsEditMode(false);
-    } catch (e) {
-      alert('保存エラー: ' + e.message);
-    }
+      setModalItem(null); setIsEditMode(false);
+    } catch (e) { alert('保存エラー: ' + e.message); }
   };
 
   const handleDelete = async () => {
@@ -135,9 +104,7 @@ export default function SakeManager() {
       await deleteDoc(doc(db, 'sakeList', modalItem.id));
       alert('削除しました');
       setModalItem(null);
-    } catch (e) {
-      alert('削除エラー');
-    }
+    } catch (e) { alert('削除エラー'); }
   };
 
   const handleFileUpload = async (event, type = 'main') => {
@@ -148,72 +115,30 @@ export default function SakeManager() {
     }
     try {
       setIsUploading(true);
-      const fileName =
-        type === 'main'
-          ? `${modalItem.id}_main.jpg`
-          : `${modalItem.id}_spec.jpg`;
+      const fileName = type === 'main' ? `${modalItem.id}_main.jpg` : `${modalItem.id}_spec.jpg`;
       const storageRef = ref(storage, `images/${fileName}`);
       await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(storageRef);
       if (type === 'main') {
-        await setDoc(
-          doc(db, 'sakeImages', 'main'),
-          { [modalItem.id]: downloadURL },
-          { merge: true }
-        );
+        await setDoc(doc(db, 'sakeImages', 'main'), { [modalItem.id]: downloadURL }, { merge: true });
         setCloudImages((prev) => ({ ...prev, [modalItem.id]: downloadURL }));
       } else {
         setEditForm((prev) => ({ ...prev, spec_image: downloadURL }));
         alert('スペック画像を読み込みました。保存してください。');
       }
-    } catch (error) {
-      alert('アップロード失敗');
-    } finally {
-      setIsUploading(false);
-    }
+    } catch (error) { alert('アップロード失敗'); } finally { setIsUploading(false); }
   };
 
   return (
     <div className="w-full md:max-w-4xl mx-auto bg-white min-h-screen shadow-2xl overflow-hidden relative font-sans">
-      <div
-        className={`flex justify-between items-center p-3 border-b ${
-          isSommelierMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
-        } transition-colors duration-300`}
-      >
-        <h1 className="font-bold text-lg flex items-center gap-2">
-          {isSommelierMode ? (
-            <>
-              <User size={20} /> Sommelier Mode
-            </>
-          ) : (
-            'Sake Manager'
-          )}
-        </h1>
-        <button
-          onClick={() => setIsSommelierMode(!isSommelierMode)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-            isSommelierMode
-              ? 'bg-white text-gray-900'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
-        >
-          {isSommelierMode ? (
-            <>
-              <LogOut size={14} /> Exit
-            </>
-          ) : (
-            <>
-              <User size={14} /> 接客モード
-            </>
-          )}
+      <div className={`flex justify-between items-center p-3 border-b ${isSommelierMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'} transition-colors duration-300`}>
+        <h1 className="font-bold text-lg flex items-center gap-2">{isSommelierMode ? <><User size={20} /> Sommelier Mode</> : 'Sake Manager'}</h1>
+        <button onClick={() => setIsSommelierMode(!isSommelierMode)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${isSommelierMode ? 'bg-white text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+          {isSommelierMode ? <><LogOut size={14} /> Exit</> : <><User size={14} /> 接客モード</>}
         </button>
       </div>
 
-      <TabNav
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        isSommelierMode={isSommelierMode}
-      />
+      <TabNav activeTab={activeTab} setActiveTab={setActiveTab} isSommelierMode={isSommelierMode} />
 
       <div className="h-full">
         {activeTab === 'sake' && (
@@ -255,8 +180,6 @@ export default function SakeManager() {
         {activeTab === 'calc' && !isSommelierMode && (
           <CalculatorView data={sakeList} />
         )}
-
-        {/* ★ 修正: MapView を使用 */}
         {activeTab === 'map' && (
           <MapView
             data={sakeList}

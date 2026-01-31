@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Minus, ClipboardCopy, Check, Save, RefreshCw, Upload, Search, X, Sparkles, Send, BarChart3, TrendingUp, Truck, Split } from 'lucide-react';
+import { Plus, Minus, Search, Save, Send, BarChart3, TrendingUp, Split } from 'lucide-react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, writeBatch, addDoc } from "firebase/firestore";
-// 共通ロジック
+import { collection, onSnapshot, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { shareData, saveDailyReport } from '../utils/reportUtils';
 
 export default function ShelfManager({ mode = 'drinks' }) {
@@ -13,7 +12,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
   const [jsonInput, setJsonInput] = useState('');
   const [expandedItemId, setExpandedItemId] = useState(null);
 
-  // モード設定
   const config = {
     drinks: { 
       title: 'ドリンク全般', 
@@ -40,7 +38,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
     }
   }[mode];
 
-  // データ取得
   const [rawData, setRawData] = useState({});
 
   useEffect(() => {
@@ -69,7 +66,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
     return () => unsubscribers.forEach(u => u());
   }, [mode]);
 
-  // 表示データ生成
   const displayItems = useMemo(() => {
     let allItems = [];
     Object.values(rawData).forEach(arr => allItems = [...allItems, ...arr]);
@@ -85,6 +81,7 @@ export default function ShelfManager({ mode = 'drinks' }) {
       ...item,
       price: item.price_cost || item.cost || 0,
       stock: (item.stock !== undefined) ? item.stock : (item.stock_bottles !== undefined) ? item.stock_bottles : (item.stock_num !== undefined) ? item.stock_num : 0,
+      level: item.stock_level ?? 100, 
       unit: item.unit || '個',
       order_qty: orderQuantities[item.id] || 0
     }));
@@ -97,6 +94,10 @@ export default function ShelfManager({ mode = 'drinks' }) {
     if (item._collection === 'otherList') fieldName = 'stock_num';
     
     await updateDoc(doc(db, item._collection, item.id), { [fieldName]: newStock });
+  };
+
+  const updateLevel = async (item, newLevel) => {
+    await updateDoc(doc(db, item._collection, item.id), { stock_level: newLevel });
   };
 
   const updateOrderQty = (itemId, delta) => {
@@ -117,7 +118,13 @@ export default function ShelfManager({ mode = 'drinks' }) {
         orderItems.forEach(item => { text += `${item.name}: ${item.order_qty}${item.unit}\n`; });
     } else {
         text = `【${config.title} 在庫報告】 ${today}\n------------------\n`;
-        displayItems.forEach(item => { if (item.stock > 0) text += `${item.name}: ${item.stock}${item.unit}\n`; });
+        displayItems.forEach(item => {
+            if (item.stock > 0 || item.level < 100) {
+                text += `${item.name}: ${item.stock}${item.unit}`;
+                if (item.level < 100) text += ` (残${item.level}%)`;
+                text += `\n`;
+            }
+        });
         text += `------------------\n資産合計: ¥${totalAsset.toLocaleString()}`;
     }
     await shareData(text, `${config.title} ${type === 'order' ? '発注' : '在庫'}`);
@@ -131,7 +138,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
     } catch (e) { alert("保存エラー: " + e.message); }
   };
 
-  // ★★★ 自動振り分けインポート機能 ★★★
   const handleSmartImport = async () => {
     try {
       const cleanJson = jsonInput.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -139,13 +145,10 @@ export default function ShelfManager({ mode = 'drinks' }) {
       
       if (!Array.isArray(data)) throw new Error("配列形式で入力してください");
       
-      // 確認ダイアログ
-      const sakeCount = data.filter(i => i.target === 'sake').length;
-      const wineCount = data.filter(i => i.target === 'wine').length;
-      const otherCount = data.filter(i => i.target === 'other').length;
-      const generalCount = data.filter(i => i.target === 'general').length;
+      const counts = { sake: 0, wine: 0, other: 0, general: 0 };
+      data.forEach(i => { if(counts[i.target] !== undefined) counts[i.target]++ });
       
-      if (!confirm(`以下の内容で振り分け登録しますか？\n\n🍶 日本酒・焼酎: ${sakeCount}件\n🍷 ワイン: ${wineCount}件\n🍺 その他ドリンク: ${otherCount}件\n📦 食品・消耗品: ${generalCount}件`)) return;
+      if (!confirm(`以下の内容で振り分け登録しますか？\n\n🍶 日本酒・焼酎: ${counts.sake}件\n🍷 ワイン: ${counts.wine}件\n🍺 その他ドリンク: ${counts.other}件\n📦 食品・消耗品: ${counts.general}件`)) return;
 
       const batch = writeBatch(db);
       let count = 0;
@@ -154,61 +157,38 @@ export default function ShelfManager({ mode = 'drinks' }) {
         let collectionName = '';
         let docData = {};
 
-        // ターゲットごとのデータ整形
         switch (item.target) {
             case 'sake':
                 collectionName = 'sakeList';
                 docData = {
-                    name: item.name,
-                    kana: item.kana || '',
-                    type: item.type || 'Sake', // Sake, Shochu, Liqueur
-                    category_rank: item.rank || 'Take',
-                    price_cost: Number(item.price) || 0,
-                    capacity_ml: Number(item.capacity) || 1800,
-                    stock_bottles: Number(item.qty) || 0,
-                    stock_level: 100,
-                    order_history: []
+                    name: item.name, kana: item.kana || '', type: item.type || 'Sake', category_rank: item.rank || 'Take',
+                    price_cost: Number(item.price) || 0, capacity_ml: Number(item.capacity) || 1800,
+                    stock_bottles: Number(item.qty) || 0, stock_level: 100, order_history: []
                 };
                 break;
             case 'wine':
                 collectionName = 'wines';
                 docData = {
-                    name: item.name,
-                    type: item.color || 'Red', // Red, White, Sparkling...
-                    vintage: item.vintage || '',
-                    country: item.country || '',
-                    price: Number(item.price_sell) || 0,
-                    cost: Number(item.price) || 0,
-                    stock_bottles: Number(item.qty) || 0,
-                    stock_level: 100,
-                    order_history: []
+                    name: item.name, type: item.color || 'Red', vintage: item.vintage || '', country: item.country || '',
+                    price: Number(item.price_sell) || 0, cost: Number(item.price) || 0,
+                    stock_bottles: Number(item.qty) || 0, stock_level: 100, order_history: []
                 };
                 break;
             case 'other':
                 collectionName = 'otherList';
                 docData = {
-                    name: item.name,
-                    category: item.category || 'Other',
-                    price_cost: Number(item.price) || 0,
-                    stock_num: Number(item.qty) || 0,
-                    order_history: []
+                    name: item.name, category: item.category || 'Other',
+                    price_cost: Number(item.price) || 0, stock_num: Number(item.qty) || 0, order_history: []
                 };
                 break;
-            default: // general (food/supply)
+            default: 
                 collectionName = 'generalItems';
                 docData = {
                     name: item.name,
-                    categoryType: mode === 'supplies' ? 'Supply' : 'Food', // 現在のモードに依存させるか、JSONの指定に従うか
+                    categoryType: (!item.categoryType && mode === 'supplies') ? 'Supply' : (item.categoryType || 'Food'),
                     category: item.category || 'その他',
-                    price_cost: Number(item.price) || 0,
-                    stock: Number(item.qty) || 0,
-                    unit: item.unit || '個'
+                    price_cost: Number(item.price) || 0, stock: Number(item.qty) || 0, stock_level: 100, unit: item.unit || '個'
                 };
-                // JSONでgeneral指定かつcategoryType指定がない場合は現在のタブのモードを適用
-                if(item.target === 'general' && !item.categoryType) {
-                    // modeがdrinksの場合はデフォルトFoodにする等の処理
-                    docData.categoryType = (mode === 'supplies') ? 'Supply' : 'Food';
-                }
                 break;
         }
 
@@ -225,7 +205,7 @@ export default function ShelfManager({ mode = 'drinks' }) {
       setJsonInput('');
 
     } catch (e) {
-      alert("エラー: " + e.message + "\nJSONの形式またはtarget指定を確認してください。");
+      alert("エラー: " + e.message + "\nJSONの形式を確認してください。");
     }
   };
 
@@ -234,8 +214,6 @@ export default function ShelfManager({ mode = 'drinks' }) {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20 font-sans">
-      
-      {/* Header */}
       <div className={`sticky top-0 z-20 ${config.color} text-white p-4 shadow-md rounded-b-xl`}>
         <div className="flex justify-between items-end mb-2">
           <div>
@@ -247,48 +225,27 @@ export default function ShelfManager({ mode = 'drinks' }) {
             <p className="text-xl font-bold">¥ {totalAsset.toLocaleString()}</p>
           </div>
         </div>
-        
         <div className="flex gap-2 mt-4">
           <div className="relative flex-grow">
             <Search className="absolute left-2 top-2.5 text-white/50" size={16}/>
-            <input 
-              type="text" 
-              placeholder="検索..." 
-              className="w-full bg-white/10 border border-white/20 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-white/50 focus:outline-none focus:bg-white/20"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-            />
+            <input type="text" placeholder="検索..." className="w-full bg-white/10 border border-white/20 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-white/50 focus:outline-none focus:bg-white/20" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
-          <button onClick={() => handleShare('stock')} className="bg-white/20 text-white px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95">
-            <Send size={14}/> 在庫
-          </button>
-          <button onClick={handleSaveReport} className="bg-white text-gray-800 px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95">
-             <Save size={14}/> 記録
-          </button>
+          <button onClick={() => handleShare('stock')} className="bg-white/20 text-white px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95"><Send size={14}/> 在庫</button>
+          <button onClick={handleSaveReport} className="bg-white text-gray-800 px-3 rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm active:scale-95"><Save size={14}/> 記録</button>
         </div>
-
         {totalOrderCount > 0 && (
             <div className="mt-3 bg-white/90 text-gray-900 p-2 rounded-lg flex justify-between items-center animate-in slide-in-from-top-2">
                 <span className="text-xs font-bold">発注候補: {totalOrderCount}点</span>
-                <button onClick={() => handleShare('order')} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold shadow flex items-center gap-1 active:scale-95">
-                    <Send size={12}/> 発注リスト送信
-                </button>
+                <button onClick={() => handleShare('order')} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold shadow flex items-center gap-1 active:scale-95"><Send size={12}/> 発注リスト</button>
             </div>
         )}
       </div>
 
-      {/* List */}
       <div className="p-3 space-y-3 mt-2">
         {loading && <div className="text-center text-gray-400 py-10">読み込み中...</div>}
         {displayItems.map(item => (
           <div key={item.id} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
-            <button 
-                onClick={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)}
-                className="absolute top-3 right-3 text-gray-300 hover:text-blue-500"
-            >
-                <BarChart3 size={18}/>
-            </button>
-
+            <button onClick={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)} className="absolute top-3 right-3 text-gray-300 hover:text-blue-500"><BarChart3 size={18}/></button>
             <div className="flex justify-between items-start mb-2 pr-8">
               <div>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${config.lightColor} mb-1 inline-block`}>{item.category || 'Item'}</span>
@@ -317,9 +274,22 @@ export default function ShelfManager({ mode = 'drinks' }) {
                 </div>
             </div>
 
+            <div className="mt-3 pt-2 border-t border-gray-100">
+                <div className="flex justify-between text-[10px] text-gray-400 font-bold mb-1">
+                    <span>開封済み残量</span>
+                    <span className={item.level < 20 ? 'text-red-500' : 'text-blue-500'}>{item.level}%</span>
+                </div>
+                <input 
+                    type="range" min="0" max="100" step="10" 
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-gray-500"
+                    value={item.level}
+                    onChange={(e) => updateLevel(item, Number(e.target.value))}
+                />
+            </div>
+
             {expandedItemId === item.id && (
                 <div className="mt-3 pt-3 border-t border-gray-100 animate-in fade-in">
-                    <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><TrendingUp size={14}/> 在庫履歴 (直近7回分)</p>
+                    <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><TrendingUp size={14}/> 在庫履歴</p>
                     {item.daily_stats && item.daily_stats.length > 0 ? (
                         <div className="flex items-end gap-1 h-24 border-b border-gray-200 pb-1">
                             {item.daily_stats.slice(-7).map((stat, idx) => (
@@ -330,32 +300,26 @@ export default function ShelfManager({ mode = 'drinks' }) {
                                 </div>
                             ))}
                         </div>
-                    ) : (
-                        <div className="text-center text-xs text-gray-400 py-4">履歴データがまだありません</div>
-                    )}
+                    ) : (<div className="text-center text-xs text-gray-400 py-4">データなし</div>)}
                 </div>
             )}
           </div>
         ))}
       </div>
       
-      {/* Smart Import Button (Always visible) */}
-      <button onClick={() => setShowJsonInput(!showJsonInput)} className={`fixed bottom-20 right-4 ${config.color} text-white p-4 rounded-full shadow-xl hover:opacity-90 active:scale-95 transition-transform z-30`}>
-           <Plus size={24}/>
-      </button>
-
+      <button onClick={() => setShowJsonInput(!showJsonInput)} className={`fixed bottom-20 right-4 ${config.color} text-white p-4 rounded-full shadow-xl hover:opacity-90 active:scale-95 transition-transform z-30`}><Plus size={24}/></button>
       {showJsonInput && (
         <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4" onClick={() => setShowJsonInput(false)}>
             <div className="bg-white w-full max-w-sm rounded-xl p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
                 <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2"><Split size={18} className="text-purple-600"/> 自動振り分け登録</h3>
-                <p className="text-xs text-gray-500 mb-3">AIに <code>target: "sake" / "wine" / "other" / "general"</code> を指定させたJSONを貼り付けてください。</p>
+                <p className="text-xs text-gray-500 mb-3">AIに <code>target</code> を指定させたJSONを貼り付けてください。</p>
                 <textarea 
                   className="w-full h-32 border border-gray-200 rounded-lg p-2 text-xs mb-3 focus:ring-2 focus:ring-blue-500 outline-none"
                   value={jsonInput}
                   onChange={e => setJsonInput(e.target.value)}
-                  placeholder='[{"target":"sake", "name":"黒霧島", ...}]'
+                  placeholder='[{"target":"general", "name":"醤油", ...}]'
                 />
-                <button onClick={handleSmartImport} className={`w-full ${config.color} text-white py-3 rounded-lg font-bold shadow-md`}>振り分け登録を実行</button>
+                <button onClick={handleSmartImport} className={`w-full ${config.color} text-white py-3 rounded-lg font-bold`}>登録</button>
             </div>
         </div>
       )}
